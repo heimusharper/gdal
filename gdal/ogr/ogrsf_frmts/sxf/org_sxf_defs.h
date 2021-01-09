@@ -367,4 +367,20 @@ typedef struct{
     GUInt32 nColorsInPalette;
 } RSCHeader;
 
+enum RSCObjectType
+{
+    RSC_TYPE_Uknown = -1, // clear style
+    RSC_TYPE_LINE = 1
+};
+/*
+    Style object
+*/
+typedef struct {
+    RSCObjectType type;
+    unsigned char lineRed;
+    unsigned char lineGreen;
+    unsigned char lineBlue;
+    float lineWidth; 
+} RSCStyle;
+
 #endif  /* SXF_DEFS_H */

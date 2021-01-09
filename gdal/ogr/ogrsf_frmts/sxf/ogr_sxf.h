@@ -56,6 +56,7 @@ protected:
     std::map<unsigned, CPLString> mnClassificators;
     std::map<long, vsi_l_offset> mnRecordDesc;
     std::map<long, vsi_l_offset>::const_iterator oNextIt;
+    std::map<unsigned, RSCStyle> mnStyle;
     SXFMapDescription  stSXFMapDescription;
     std::set<GUInt16> snAttributeCodes;
     int m_nSXFFormatVer;
@@ -97,6 +98,7 @@ public:
     virtual bool AddRecord( long nFID, unsigned nClassCode,
                             vsi_l_offset nOffset, bool bHasSemantic,
                             size_t nSemanticsSize );
+    virtual void AddStyle(unsigned nClassCode, RSCStyle style);
 private:
     static int CanRecode(const char* pszEncoding);
 };
@@ -126,6 +128,8 @@ class OGRSXFDataSource final: public OGRDataSource
     static OGRErr ReadSXFMapDescription(VSILFILE* fpSXF, SXFPassport& passport,
                                         const char* const* papszOpenOpts);
     OGRSXFLayer*       GetLayerById(GByte);
+    static int GetRGB(const unsigned *rscColorFormat, unsigned char &red, 
+                unsigned char &green, unsigned char &blue);
 public:
                         OGRSXFDataSource();
                         virtual ~OGRSXFDataSource();

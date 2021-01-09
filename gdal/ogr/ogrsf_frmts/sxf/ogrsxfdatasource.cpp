@@ -1098,35 +1098,150 @@ void OGRSXFDataSource::CreateLayers(VSILFILE* fpRSC, const char* const* papszOpe
     VSIFSeekL(fpRSC, stRSCFileHeader.Objects.nOffset - sizeof(szObjectsID), SEEK_SET);
     VSIFReadL(&szObjectsID, sizeof(szObjectsID), 1, fpRSC);
     nOffset = stRSCFileHeader.Objects.nOffset;
-    _object OBJECT;
-
+    _object *szObjects = new _object[stRSCFileHeader.Objects.nRecordCount];
+    // collect objects
     for( GUInt32 i = 0; i < stRSCFileHeader.Objects.nRecordCount; ++i )
     {
+        _object OBJECT;
         VSIFReadL(&OBJECT, sizeof(_object), 1, fpRSC);
         CPL_LSBPTR32(&(OBJECT.nLength));
         CPL_LSBPTR32(&(OBJECT.nClassifyCode));
         CPL_LSBPTR32(&(OBJECT.nObjectNumber));
         CPL_LSBPTR32(&(OBJECT.nObjectCode));
-
-        OGRSXFLayer* pLayer = GetLayerById(OBJECT.szLayernNo);
-        if (nullptr != pLayer)
-        {
-            char* pszRecoded = nullptr;
-            if(OBJECT.szName[0] == 0)
-                pszRecoded = CPLStrdup("Unnamed");
-            else if (stRSCFileHeader.nFontEnc == 125)
-                pszRecoded = CPLRecode(OBJECT.szName, "KOI8-R", CPL_ENC_UTF8);
-            else if (stRSCFileHeader.nFontEnc == 126)
-                pszRecoded = CPLRecode(OBJECT.szName, "CP1251", CPL_ENC_UTF8);
-            else
-                pszRecoded = CPLStrdup(OBJECT.szName); //already in  CPL_ENC_UTF8
-
-            pLayer->AddClassifyCode(OBJECT.nClassifyCode, pszRecoded);
-            //printf("%d;%s\n", OBJECT.nClassifyCode, OBJECT.szName);
-            CPLFree(pszRecoded);
-        }
-
+        
+        szObjects[i] = OBJECT;
         nOffset += OBJECT.nLength;
         VSIFSeekL(fpRSC, nOffset, SEEK_SET);
     }
+    // collect paletts
+    struct _palette
+    {
+        unsigned szPalette[256];
+        char szShortName[32];
+    };
+    _palette PALETTE;
+    nOffset = stRSCFileHeader.Palettes.nOffset;
+    VSIFSeekL(fpRSC, nOffset, SEEK_SET);
+    if (stRSCFileHeader.Palettes.nRecordCount > 0)
+    {
+        VSIFReadL(&PALETTE, sizeof(_palette), 1, fpRSC);
+        for ( GUInt32 i = 0; i < 256; ++i )
+        {   
+            CPL_LSBPTR32(&(PALETTE.szPalette[i]));
+        }
+    }
+    // collect display parameters
+    std::map<unsigned, RSCStyle> styleCollection;
+    
+    struct _parameter
+    {
+        unsigned nLength;
+        unsigned short nCode;
+        unsigned short nFunc;
+    };
+    struct _parameterSimpleLine
+    {
+        char nempty[sizeof(_parameter)];
+        unsigned szColor;
+        unsigned szWidth;
+    };
+    _parameter PARAMETERS;
+    nOffset = stRSCFileHeader.Parameters.nOffset;
+    VSIFSeekL(fpRSC, nOffset, SEEK_SET);
+    for (GUInt32 i = 0; i < stRSCFileHeader.Parameters.nRecordCount; ++i)
+    {
+        VSIFReadL(&PARAMETERS, sizeof(_parameter), 1, fpRSC);
+        CPL_LSBPTR32(&(PARAMETERS.nLength));
+        CPL_LSBPTR16(&(PARAMETERS.nFunc));
+        CPL_LSBPTR16(&(PARAMETERS.nCode));
+        
+        bool objFounded = false;
+        unsigned objID = 0;
+        for( GUInt32 j = 0; j < stRSCFileHeader.Objects.nRecordCount; ++j )
+        {
+            if (szObjects[j].nObjectNumber == PARAMETERS.nCode)
+            {
+                objFounded = true;
+                objID = szObjects[j].nClassifyCode;
+                break;
+            }
+        }
+        if (objFounded) {
+            switch (PARAMETERS.nFunc)
+            {
+                case 128: { // simple line 
+                    VSIFSeekL(fpRSC, nOffset, SEEK_SET);
+                    _parameterSimpleLine PL;
+                    VSIFReadL(&PL, sizeof(_parameterSimpleLine), 1, fpRSC);
+                    CPL_LSBPTR32(&(PL.szColor));
+                    CPL_LSBPTR32(&(PL.szWidth));
+                    unsigned char red = 0;
+                    unsigned char green = 0;
+                    unsigned char blue = 0;
+                    int paletteId = GetRGB(&(PL.szColor), red, green, blue);
+                    if (paletteId >= 0 && paletteId < 256)
+                        GetRGB(&(PALETTE.szPalette[paletteId]), red, green, blue);
+                    // TODO: scale size may be wrong
+                    float w = ((float)stRSCFileHeader.nScale / 2.f) / (float)PL.szWidth;
+                    RSCStyle style;
+                    style.type = RSCObjectType::RSC_TYPE_LINE;
+                    style.lineRed = red;
+                    style.lineGreen = green;
+                    style.lineBlue = blue;
+                    style.lineWidth = w;
+                    styleCollection[objID] = style;
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+        nOffset += PARAMETERS.nLength;
+        VSIFSeekL(fpRSC, nOffset, SEEK_SET);
+    }
+    
+    
+    for( GUInt32 i = 0; i < stRSCFileHeader.Objects.nRecordCount; ++i )
+    {
+        _object OBJ = szObjects[i];
+        OGRSXFLayer* pLayer = GetLayerById(OBJ.szLayernNo);
+        if (nullptr != pLayer)
+        {
+            char* pszRecoded = nullptr;
+            if(OBJ.szName[0] == 0)
+                pszRecoded = CPLStrdup("Unnamed");
+            else if (stRSCFileHeader.nFontEnc == 125)
+                pszRecoded = CPLRecode(OBJ.szName, "KOI8-R", CPL_ENC_UTF8);
+            else if (stRSCFileHeader.nFontEnc == 126)
+                pszRecoded = CPLRecode(OBJ.szName, "CP1251", CPL_ENC_UTF8);
+            else
+                pszRecoded = CPLStrdup(OBJ.szName); //already in  CPL_ENC_UTF8
+
+            pLayer->AddClassifyCode(OBJ.nClassifyCode, pszRecoded);
+            if (styleCollection.find(OBJ.nClassifyCode) != styleCollection.end())
+            {
+                // if exists style object
+                pLayer->AddStyle(OBJ.nClassifyCode, styleCollection[OBJ.nClassifyCode]);
+            }
+            //printf("%d;%s\n", OBJ.nClassifyCode, OBJ.szName);
+            CPLFree(pszRecoded);
+        }
+    }
+    delete [] szObjects;
+}
+
+
+int OGRSXFDataSource::GetRGB(const unsigned *rscColorFormat, unsigned char &red, unsigned char &green, unsigned char &blue)
+{
+    uint8_t color[4];
+    memcpy(&color, rscColorFormat, sizeof(unsigned));
+    // TODO: in documentation 0x0F, in real files 0xF0, documentation BUG?
+    if (color[3] == 0x0F || color[3] == 0xF0)
+    {
+        return color[0];
+    }
+    red = color[0];
+    green = color[1];
+    blue = color[2];
+    return -1;
 }

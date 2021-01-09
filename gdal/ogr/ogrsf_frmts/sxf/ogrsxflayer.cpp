@@ -120,6 +120,16 @@ void OGRSXFLayer::AddClassifyCode(unsigned nClassCode, const char *szName)
 }
 
 /************************************************************************/
+/*             AddStyle(unsigned nClassCode, RSCStyle style)            */
+/* Add style for classify code                                          */
+/************************************************************************/
+
+void OGRSXFLayer::AddStyle(unsigned nClassCode, RSCStyle style)
+{
+    mnStyle[nClassCode] = style;
+}
+
+/************************************************************************/
 /*                           AddRecord()                                */
 /************************************************************************/
 
@@ -849,6 +859,39 @@ OGRFeature *OGRSXFLayer::GetNextRawFeature(long nFID)
     poFeature->SetField("CLNAME", szName);
 
     poFeature->SetField("OBJECTNUMB", stRecordHeader.nSubObjectCount);
+
+    RSCStyle style;
+    style.type = RSCObjectType::RSC_TYPE_Uknown;// empty style
+    if (mnStyle.find(stRecordHeader.nClassifyCode) != mnStyle.end())
+    {
+        style = mnStyle[stRecordHeader.nClassifyCode];
+    }
+    switch (style.type)
+    {
+        case RSCObjectType::RSC_TYPE_LINE: {
+            CPLString styleString;
+            
+            GByte *colorBytes =(GByte*)VSIMalloc(4);
+            colorBytes[0] = 0x00;
+            colorBytes[1] = style.lineRed;
+            colorBytes[2] = style.lineGreen;
+            colorBytes[3] = style.lineBlue;
+            char *colorHex = CPLBinaryToHex( 4, colorBytes );
+            
+            styleString += CPLString().Printf("PEN(c#%s,w/%imm)", colorHex, ((int)(style.lineWidth * 1000.f)));
+            
+            // printf("SET STYLE %s;%s\n", styleString.c_str(), stRecordHeader.nClassifyCode);
+            
+            CPLFree( colorHex );
+            CPLFree( colorBytes );
+            
+            poFeature->SetStyleString(styleString.c_str()); // "PEN(c:#FF0000,w:500mm)"
+            break;
+        }
+        case RSCObjectType::RSC_TYPE_Uknown:
+        default:
+            break;
+    }
 
     if (bHasAttributes)
     {
